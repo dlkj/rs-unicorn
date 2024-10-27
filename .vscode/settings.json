@@ -1,10 +1,14 @@
 {
-    "rust-analyzer.cargo.target": "thumbv6m-none-eabi",
-    "rust-analyzer.checkOnSave.allTargets": false,
-    "editor.formatOnSave": true,
-    "cSpell.words": [
-        "pico",
-        "sclk",
-        "Uninit"
-    ]
+  "rust-analyzer.cargo.target": "thumbv6m-none-eabi",
+  "rust-analyzer.checkOnSave.allTargets": false,
+  "editor.formatOnSave": true,
+  "cSpell.words": [
+    "autopull",
+    "defmt",
+    "fets",
+    "pico",
+    "pindirs",
+    "sclk",
+    "Uninit"
+  ]
 }
