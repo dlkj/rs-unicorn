@@ -12,6 +12,12 @@ use bsp::hal::{clocks::init_clocks_and_plls, pac, sio::Sio, watchdog::Watchdog};
 
 use rs_unicorn::{Unicorn, UnicornPins};
 
+/* Todo:
+ *   - DMA of bit stream to pio
+ *   - byte per pixel vs nibble per pixel
+ *   - Check Pimoroni repos for updated pio code - https://github.com/pimoroni/pimoroni-pico/blob/main/libraries/galactic_unicorn/galactic_unicorn.pio
+ *   - Separate frame buffer from bit stream
+ */
 #[entry]
 fn main() -> ! {
     info!("Program start");
@@ -56,22 +62,35 @@ fn main() -> ! {
 
     let mut unicorn = Unicorn::new(&mut pio, sm0, unicorn_pins);
 
-    loop {
-        let colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)];
-        let clear = (0, 0, 0);
-        for color in colors {
-            for y in 0..rs_unicorn::HEIGHT as u8 {
-                for x in 0..rs_unicorn::WIDTH as u8 {
-                    unicorn.set_pixel((x, y), color);
-                }
-            }
-            unicorn.draw();
+    let brightness = 50;
+    let red = (brightness, 0, 0);
+    let green = (0, brightness, 0);
+    let blue = (0, 0, brightness);
+    let white = (brightness, brightness, brightness);
+    let black = (0, 0, 0);
+    for y in 0..rs_unicorn::HEIGHT as u8 {
+        let palette = if y % 4 < 2 {
+            [white, red, green, blue, black, black, black, black]
+        } else {
+            [black, black, black, black, white, red, green, blue]
+        };
+
+        for x in 0..rs_unicorn::WIDTH as u8 {
+            unicorn.set_pixel((x, y), palette[(x / 2) as usize]);
         }
-        for y in 0..rs_unicorn::HEIGHT as u8 {
-            for x in 0..rs_unicorn::WIDTH as u8 {
-                unicorn.set_pixel((x, y), clear);
-            }
+    }
+
+    let mut frame = 0;
+    let palette = [white, red, green, blue, black, black, black, black];
+    loop {
+        for x in 0..rs_unicorn::WIDTH as u8 {
+            unicorn.set_pixel(
+                (x, 6),
+                palette[((x + frame) % palette.len() as u8) as usize],
+            );
         }
         unicorn.draw();
+        // frame += 1;
+        // frame %= palette.len() as u8;
     }
 }
