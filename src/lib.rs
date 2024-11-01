@@ -2,10 +2,14 @@
 
 use rp_pico::{
     self as bsp,
-    hal::pio::{self, PIOExt, PIO},
+    hal::{
+        dma::{self, Channel},
+        pio::{self, PIOExt, PIO},
+    },
 };
 
 use bsp::hal::gpio::{bank0::*, FunctionPio0, Pin, PullDown};
+use zerocopy::IntoBytes;
 pub struct UnicornPins {
     pub sin: Pin<Gpio8, FunctionPio0, PullDown>,
     pub sclk: Pin<Gpio9, FunctionPio0, PullDown>,
@@ -23,32 +27,49 @@ pub struct UnicornPins {
 const ROW_COUNT2: usize = 7;
 const ROW_BYTES: usize = 12;
 const BCD_FRAMES: usize = 15; // includes fet discharge frame
-const BIT_STREAM_LENGTH: usize = ROW_COUNT2 * ROW_BYTES * BCD_FRAMES;
+const BIT_STREAM_LENGTH: usize = ROW_COUNT2 * ROW_BYTES * BCD_FRAMES / 4;
 pub const WIDTH: usize = 16;
 pub const HEIGHT: usize = 7;
 
-pub struct Unicorn<'a, P, SM>
+pub struct Unicorn<'a, P, SM, CH0, CH1>
 where
     P: PIOExt,
     SM: pio::ValidStateMachine<PIO = P>,
+    pio::Tx<SM>: dma::WriteTarget,
+    CH0: dma::ChannelIndex,
+    CH1: dma::ChannelIndex,
 {
     pio: &'a mut PIO<P>,
     sm: pio::StateMachine<SM, pio::Running>,
-    tx: pio::Tx<SM>,
     pins: UnicornPins,
-    bit_stream: [u8; BIT_STREAM_LENGTH],
+    transfer_buf: Option<(
+        dma::double_buffer::Transfer<
+            Channel<CH0>,
+            Channel<CH1>,
+            &'static mut [u32; BIT_STREAM_LENGTH],
+            pio::Tx<SM>,
+            (),
+        >,
+        &'static mut [u32; BIT_STREAM_LENGTH],
+    )>,
 }
 
-impl<'a, P, SM> Unicorn<'a, P, (P, SM)>
+impl<'a, P, SM, CH0, CH1> Unicorn<'a, P, (P, SM), CH0, CH1>
 where
     P: PIOExt,
     SM: pio::StateMachineIndex,
+    CH0: dma::ChannelIndex,
+    CH1: dma::ChannelIndex,
 {
     pub fn new(
         pio: &'a mut PIO<P>,
         sm: pio::UninitStateMachine<(P, SM)>,
         pins: UnicornPins,
-    ) -> Unicorn<'a, P, (P, SM)> {
+        ch0: Channel<CH0>,
+        ch1: Channel<CH1>,
+        bit_stream1: &'static mut [u32; BIT_STREAM_LENGTH],
+        bit_stream2: &'static mut [u32; BIT_STREAM_LENGTH],
+    ) -> Unicorn<'a, P, (P, SM), CH0, CH1> {
         let pio_program = Self::assemble_pio_program();
         let installed = pio.install(&pio_program).unwrap();
 
@@ -93,18 +114,21 @@ where
 
         let sm = sm.start();
 
+        Self::init_bit_stream(bit_stream1);
+        Self::init_bit_stream(bit_stream2);
+
+        let transfer = dma::double_buffer::Config::new((ch0, ch1), bit_stream1, tx).start();
+
         Self {
             pio,
             sm,
-            tx,
             pins,
-            bit_stream: Self::init_bit_stream(),
+            transfer_buf: Some((transfer, bit_stream2)),
         }
     }
 
-    fn init_bit_stream() -> [u8; BIT_STREAM_LENGTH] {
-        let mut bit_stream = [0; BIT_STREAM_LENGTH];
-
+    fn init_bit_stream(bit_stream: &mut [u32; BIT_STREAM_LENGTH]) {
+        let bit_stream = bit_stream.as_mut_bytes();
         // initialize the bcd timing values and row selects in the bit stream
         for row in 0..HEIGHT {
             for frame in 0..BCD_FRAMES {
@@ -132,8 +156,6 @@ where
                 }
             }
         }
-
-        bit_stream
     }
 
     fn assemble_pio_program() -> ::pio::Program<32_usize> {
@@ -230,10 +252,13 @@ static GAMMA_14BIT: [u16; 256] = [
     15273, 15410, 15547, 15685, 15823, 15962, 16102, 16242, 16383,
 ];
 
-impl<'pio, P, SM> Unicorn<'pio, P, SM>
+impl<'pio, P, SM, CH0, CH1> Unicorn<'pio, P, SM, CH0, CH1>
 where
     P: PIOExt,
     SM: pio::ValidStateMachine<PIO = P>,
+    pio::Tx<SM>: dma::WriteTarget<TransmittedWord = u32>,
+    CH0: dma::ChannelIndex,
+    CH1: dma::ChannelIndex,
 {
     #[inline(always)]
     pub fn set_pixel(&mut self, (x, y): (u8, u8), (r, g, b): (u8, u8, u8)) {
@@ -241,53 +266,57 @@ where
     }
 
     pub fn set_pixel_rgb(&mut self, x: u8, y: u8, r: u8, g: u8, b: u8) {
-        let x = x as usize;
-        let y = y as usize;
-        if x >= WIDTH || y >= HEIGHT {
-            return;
-        }
+        if let Some((transfer, buffer)) = self.transfer_buf.take() {
+            let x = x as usize;
+            let y = y as usize;
+            if x >= WIDTH || y >= HEIGHT {
+                return;
+            }
 
-        // make those coordinates sane
-        let x = (WIDTH - 1) - x;
+            // make those coordinates sane
+            let x = (WIDTH - 1) - x;
 
-        // work out the byte offset of this pixel
-        let byte_offset = x / 2;
+            // work out the byte offset of this pixel
+            let byte_offset = x / 2;
 
-        // check if it's the high or low nibble and create mask and shift value
-        let shift = if x % 2 == 0 { 0 } else { 4 };
-        let nibble_mask = 0b00001111 << shift;
+            // check if it's the high or low nibble and create mask and shift value
+            let shift = if x % 2 == 0 { 0 } else { 4 };
+            let nibble_mask = 0b00001111 << shift;
 
-        let mut gr = GAMMA_14BIT[r as usize];
-        let mut gg = GAMMA_14BIT[g as usize];
-        let mut gb = GAMMA_14BIT[b as usize];
+            let mut gr = GAMMA_14BIT[r as usize];
+            let mut gg = GAMMA_14BIT[g as usize];
+            let mut gb = GAMMA_14BIT[b as usize];
 
-        // set the appropriate bits in the separate bcd frames
-        for frame in 0..BCD_FRAMES {
-            // determine offset in the buffer for this row/frame
-            let offset = (y * ROW_BYTES * BCD_FRAMES) + (ROW_BYTES * frame);
+            let bit_stream = buffer.as_mut_bytes();
+            // set the appropriate bits in the separate bcd frames
+            for frame in 0..BCD_FRAMES {
+                // determine offset in the buffer for this row/frame
+                let offset = (y * ROW_BYTES * BCD_FRAMES) + (ROW_BYTES * frame);
 
-            let mut rgbd = ((gr & 0b1) << 1) | ((gg & 0b1) << 3) | ((gb & 0b1) << 2);
+                let mut rgbd = ((gr & 0b1) << 1) | ((gg & 0b1) << 3) | ((gb & 0b1) << 2);
 
-            // shift to correct nibble
-            rgbd <<= shift;
+                // shift to correct nibble
+                rgbd <<= shift;
 
-            // clear existing data
-            self.bit_stream[offset + byte_offset] &= !nibble_mask;
+                // clear existing data
+                bit_stream[offset + byte_offset] &= !nibble_mask;
 
-            // set new data
-            self.bit_stream[offset + byte_offset] |= rgbd as u8;
+                // set new data
+                bit_stream[offset + byte_offset] |= rgbd as u8;
 
-            gr >>= 1;
-            gg >>= 1;
-            gb >>= 1;
+                gr >>= 1;
+                gg >>= 1;
+                gb >>= 1;
+            }
+            self.transfer_buf.replace((transfer, buffer));
         }
     }
 
     pub fn draw(&mut self) {
-        for batch in self.bit_stream.chunks_exact(4) {
-            while !self.tx.write(u32::from_le_bytes(unsafe {
-                batch.try_into().unwrap_unchecked()
-            })) {}
+        if let Some((transfer, buffer)) = self.transfer_buf.take() {
+            let transfer = transfer.read_next(buffer);
+            let (buffer, transfer) = transfer.wait();
+            self.transfer_buf.replace((transfer, buffer));
         }
     }
 }

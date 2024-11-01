@@ -2,21 +2,28 @@
 #![no_main]
 
 use bsp::entry;
+use cortex_m::singleton;
 use defmt::*;
 use defmt_rtt as _;
 use panic_probe as _;
 
-use rp_pico::{self as bsp, hal::pio::PIOExt};
+use rp_pico::{
+    self as bsp,
+    hal::{
+        dma::{self, DMAExt},
+        pio::PIOExt,
+    },
+};
 
 use bsp::hal::{clocks::init_clocks_and_plls, pac, sio::Sio, watchdog::Watchdog};
 
 use rs_unicorn::{Unicorn, UnicornPins};
 
 /* Todo:
- *   - DMA of bit stream to pio
  *   - byte per pixel vs nibble per pixel
  *   - Check Pimoroni repos for updated pio code - https://github.com/pimoroni/pimoroni-pico/blob/main/libraries/galactic_unicorn/galactic_unicorn.pio
  *   - Separate frame buffer from bit stream
+ *   - embedded graphics api support
  */
 #[entry]
 fn main() -> ! {
@@ -60,9 +67,14 @@ fn main() -> ! {
         sr6: pins.gpio16.into_function(),
     };
 
-    let mut unicorn = Unicorn::new(&mut pio, sm0, unicorn_pins);
+    let dma = pac.DMA.split(&mut pac.RESETS);
 
-    let brightness = 50;
+    let buf1 = singleton!(: [u32; 315] = [0; 315]).unwrap();
+    let buf2 = singleton!(: [u32; 315] = [0; 315]).unwrap();
+
+    let mut unicorn = Unicorn::new(&mut pio, sm0, unicorn_pins, dma.ch0, dma.ch1, buf1, buf2);
+
+    let brightness = 255;
     let red = (brightness, 0, 0);
     let green = (0, brightness, 0);
     let blue = (0, 0, brightness);
@@ -90,7 +102,7 @@ fn main() -> ! {
             );
         }
         unicorn.draw();
-        // frame += 1;
-        // frame %= palette.len() as u8;
+        frame += 1;
+        frame %= palette.len() as u8;
     }
 }

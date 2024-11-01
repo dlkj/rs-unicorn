@@ -17,6 +17,8 @@ panic-probe = { version = "0.3", features = ["print-defmt"] }
 rp-pico = "0.9"
 pio = "0.2"
 pio-proc = "0.2"
+zerocopy = "0.8.8"
+zerocopy-derive = "0.8.8"
 
 # cargo build/run
 [profile.dev]
