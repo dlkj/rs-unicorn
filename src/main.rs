@@ -6,7 +6,7 @@ use cortex_m::singleton;
 use defmt::*;
 use defmt_rtt as _;
 use embedded_graphics::{
-    mono_font::{ascii::FONT_5X7, MonoTextStyle},
+    mono_font::{ascii::FONT_5X8, MonoTextStyle},
     pixelcolor::Rgb888,
     prelude::*,
     text::{Alignment, Text},
@@ -23,10 +23,11 @@ use bsp::hal::{
 use rs_unicorn::{Unicorn, UnicornPins, HEIGHT};
 
 /* Todo:
- *   - byte per pixel vs nibble per pixel
  *   - Check Pimoroni repos for updated pio code - https://github.com/pimoroni/pimoroni-pico/blob/main/libraries/galactic_unicorn/galactic_unicorn.pio
- *   - Separate frame buffer from bit stream
- *   - embedded graphics api support
+ *   - Measure and optimize rendering frame buffer to bit stream
+ *     - byte per pixel vs nibble per pixel (See Galactic Unicorn code)
+ *     - Only update changed pixels
+ *     - Minimize read-modify-write operations
  */
 #[entry]
 fn main() -> ! {
@@ -79,65 +80,22 @@ fn main() -> ! {
 
     let mut unicorn = Unicorn::new(&mut pio, sm0, unicorn_pins, dma.ch0, dma.ch1, buf1, buf2);
 
-    // `    let brightness = 100;
-    //     let red = (brightness, 0, 0);
-    //     let green = (0, brightness, 0);
-    //     let blue = (0, 0, brightness);
-    //     let white = (brightness, brightness, brightness);
-    //     let black = (0, 0, 0);
-    //     for y in 0..rs_unicorn::HEIGHT as u8 {
-    //         let palette = if y % 4 < 2 {
-    //             [white, red, green, blue, black, black, black, black]
-    //         } else {
-    //             [black, black, black, black, white, red, green, blue]
-    //         };
+    unicorn.clear(Rgb888::CSS_MIDNIGHT_BLUE).unwrap();
 
-    //         for x in 0..rs_unicorn::WIDTH as u8 {
-    //             unicorn.draw()
-    //             unicorn.set_pixel((x, y), palette[(x / 2) as usize]);
-    //         }
-    //     }`
-
-    let character_style = MonoTextStyle::new(&FONT_5X7, Rgb888::CSS_DIM_GRAY);
-
-    // Draw centered text.
-    let text = "abc";
+    let text = "ABC";
+    let character_style = MonoTextStyle::new(&FONT_5X8, Rgb888::CSS_DARK_GOLDENROD);
     Text::with_alignment(
         text,
-        Point::new(0, HEIGHT as i32 - 1),
+        Point::new(1, HEIGHT as i32 - 1),
         character_style,
         Alignment::Left,
     )
     .draw(&mut unicorn)
     .unwrap();
 
-    unicorn.flush();
-
-    let text = "abc";
-    Text::with_alignment(
-        text,
-        Point::new(0, HEIGHT as i32 - 1),
-        character_style,
-        Alignment::Left,
-    )
-    .draw(&mut unicorn)
-    .unwrap();
-
-    // let mut frame = 0;
-    // let palette = [white, red, green, blue, black, black, black, black];
     loop {
-        // for x in 0..rs_unicorn::WIDTH as u8 {
-        //     unicorn.set_pixel(
-        //         (x, 6),
-        //         palette[((x + frame) % palette.len() as u8) as usize],
-        //     );
-        // }
-
         led.set_high().unwrap();
         unicorn.flush();
         led.set_low().unwrap();
-
-        // frame += 1;
-        // frame %= palette.len() as u8;
     }
 }

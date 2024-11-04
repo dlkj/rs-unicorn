@@ -34,16 +34,15 @@ const BIT_STREAM_LENGTH: usize = ROW_COUNT2 * ROW_BYTES * BCD_FRAMES / 4;
 pub const WIDTH: usize = 16;
 pub const HEIGHT: usize = 7;
 
-type TransferBuffer<CH0, CH1, SM> = Option<(
+type ActiveTransfer<CH0, CH1, SM> = Option<
     dma::double_buffer::Transfer<
         Channel<CH0>,
         Channel<CH1>,
         &'static mut [u32; BIT_STREAM_LENGTH],
         pio::Tx<SM>,
-        (),
+        dma::double_buffer::ReadNext<&'static mut [u32; BIT_STREAM_LENGTH]>,
     >,
-    &'static mut [u32; BIT_STREAM_LENGTH],
-)>;
+>;
 
 pub struct Unicorn<P, SM, CH0, CH1>
 where
@@ -53,7 +52,8 @@ where
     CH0: dma::ChannelIndex,
     CH1: dma::ChannelIndex,
 {
-    transfer_buf: TransferBuffer<CH0, CH1, SM>,
+    transfer_buf: ActiveTransfer<CH0, CH1, SM>,
+    frame_buffer: [Rgb888; HEIGHT * WIDTH],
 }
 
 impl<'a, P, SM, CH0, CH1> Unicorn<P, (P, SM), CH0, CH1>
@@ -120,9 +120,11 @@ where
         Self::init_bit_stream(bit_stream2);
 
         let transfer = dma::double_buffer::Config::new((ch0, ch1), bit_stream1, tx).start();
+        let transfer = transfer.read_next(bit_stream2);
 
         Self {
-            transfer_buf: Some((transfer, bit_stream2)),
+            transfer_buf: Some(transfer),
+            frame_buffer: [Rgb888::BLACK; HEIGHT * WIDTH],
         }
     }
 
@@ -259,63 +261,69 @@ where
     CH0: dma::ChannelIndex,
     CH1: dma::ChannelIndex,
 {
-    #[inline(always)]
-    pub fn set_pixel(&mut self, (x, y): (u8, u8), (r, g, b): (u8, u8, u8)) {
-        self.set_pixel_rgb(x, y, r, g, b)
-    }
+    fn set_pixel_rgb888(bit_stream: &mut [u32; BIT_STREAM_LENGTH], (x, y): (u8, u8), c: Rgb888) {
+        let x = x as usize;
+        let y = y as usize;
+        if x >= WIDTH || y >= HEIGHT {
+            return;
+        }
 
-    pub fn set_pixel_rgb(&mut self, x: u8, y: u8, r: u8, g: u8, b: u8) {
-        if let Some((transfer, buffer)) = self.transfer_buf.take() {
-            let x = x as usize;
-            let y = y as usize;
-            if x >= WIDTH || y >= HEIGHT {
-                return;
-            }
+        // make those coordinates sane
+        let x = (WIDTH - 1) - x;
 
-            // make those coordinates sane
-            let x = (WIDTH - 1) - x;
+        // work out the byte offset of this pixel
+        let byte_offset = x / 2;
 
-            // work out the byte offset of this pixel
-            let byte_offset = x / 2;
+        // check if it's the high or low nibble and create mask and shift value
+        let shift = if x % 2 == 0 { 0 } else { 4 };
+        let nibble_mask = 0b00001111 << shift;
 
-            // check if it's the high or low nibble and create mask and shift value
-            let shift = if x % 2 == 0 { 0 } else { 4 };
-            let nibble_mask = 0b00001111 << shift;
+        let mut gr = GAMMA_14BIT[c.r() as usize];
+        let mut gg = GAMMA_14BIT[c.g() as usize];
+        let mut gb = GAMMA_14BIT[c.b() as usize];
 
-            let mut gr = GAMMA_14BIT[r as usize];
-            let mut gg = GAMMA_14BIT[g as usize];
-            let mut gb = GAMMA_14BIT[b as usize];
+        let bit_stream = bit_stream.as_mut_bytes();
+        // set the appropriate bits in the separate bcd frames
+        for frame in 0..BCD_FRAMES {
+            // determine offset in the buffer for this row/frame
+            let offset = (y * ROW_BYTES * BCD_FRAMES) + (ROW_BYTES * frame);
 
-            let bit_stream = buffer.as_mut_bytes();
-            // set the appropriate bits in the separate bcd frames
-            for frame in 0..BCD_FRAMES {
-                // determine offset in the buffer for this row/frame
-                let offset = (y * ROW_BYTES * BCD_FRAMES) + (ROW_BYTES * frame);
+            let mut rgbd = ((gr & 0b1) << 1) | ((gg & 0b1) << 3) | ((gb & 0b1) << 2);
 
-                let mut rgbd = ((gr & 0b1) << 1) | ((gg & 0b1) << 3) | ((gb & 0b1) << 2);
+            // shift to correct nibble
+            rgbd <<= shift;
 
-                // shift to correct nibble
-                rgbd <<= shift;
+            // clear existing data
+            bit_stream[offset + byte_offset] &= !nibble_mask;
 
-                // clear existing data
-                bit_stream[offset + byte_offset] &= !nibble_mask;
+            // set new data
+            bit_stream[offset + byte_offset] |= rgbd as u8;
 
-                // set new data
-                bit_stream[offset + byte_offset] |= rgbd as u8;
-
-                gr >>= 1;
-                gg >>= 1;
-                gb >>= 1;
-            }
-            self.transfer_buf.replace((transfer, buffer));
+            gr >>= 1;
+            gg >>= 1;
+            gb >>= 1;
         }
     }
 
     pub fn flush(&mut self) {
-        if let Some((transfer, buffer)) = self.transfer_buf.take() {
-            let transfer = transfer.read_next(buffer);
-            let (buffer, transfer) = transfer.wait();
-            self.transfer_buf.replace((transfer, buffer));
+        if let Some(transfer) = self.transfer_buf.take() {
+            // Wait for a free bit stream buffer
+            let (bit_stream, transfer) = transfer.wait();
+
+            // Create bit stream from frame buffer
+            for y in 0..HEIGHT {
+                for x in 0..WIDTH {
+                    Self::set_pixel_rgb888(
+                        bit_stream,
+                        (x as u8, y as u8),
+                        self.frame_buffer[(x as u8 + (y as u8 * WIDTH as u8)) as usize],
+                    );
+                }
+            }
+
+            // Add the bit stream to the DMA queue
+            let transfer = transfer.read_next(bit_stream);
+            self.transfer_buf.replace(transfer);
         }
     }
 }
@@ -338,7 +346,7 @@ where
     {
         for Pixel(p, c) in pixels {
             if self.bounding_box().contains(p) {
-                self.set_pixel((p.x as u8, p.y as u8), (c.r(), c.g(), c.b()));
+                self.frame_buffer[(p.x as u8 + (p.y as u8 * WIDTH as u8)) as usize] = c;
             }
         }
         Ok(())
