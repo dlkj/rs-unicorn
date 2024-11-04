@@ -5,10 +5,18 @@
   "cSpell.words": [
     "autopull",
     "defmt",
+    "endb",
+    "endg",
+    "endr",
     "fets",
+    "ifempty",
     "pico",
+    "Pimoroni",
     "pindirs",
+    "rgbd",
     "sclk",
-    "Uninit"
+    "Uninit",
+    "XOSC",
+    "zerocopy"
   ]
 }

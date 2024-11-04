@@ -4,6 +4,11 @@ use bsp::hal::{
     dma::{self, Channel},
     pio::{self, PIOExt, PIO},
 };
+use embedded_graphics::{
+    pixelcolor::Rgb888,
+    prelude::{Dimensions, DrawTarget, OriginDimensions, RgbColor, Size},
+    Pixel,
+};
 use rp_pico::{self as bsp};
 
 use bsp::hal::gpio::{bank0::*, FunctionPio0, Pin, PullDown};
@@ -306,11 +311,49 @@ where
         }
     }
 
-    pub fn draw(&mut self) {
+    pub fn flush(&mut self) {
         if let Some((transfer, buffer)) = self.transfer_buf.take() {
             let transfer = transfer.read_next(buffer);
             let (buffer, transfer) = transfer.wait();
             self.transfer_buf.replace((transfer, buffer));
         }
+    }
+}
+
+impl<P, SM, CH0, CH1> DrawTarget for Unicorn<P, SM, CH0, CH1>
+where
+    P: PIOExt,
+    SM: pio::ValidStateMachine<PIO = P>,
+    pio::Tx<SM>: dma::WriteTarget<TransmittedWord = u32>,
+    CH0: dma::ChannelIndex,
+    CH1: dma::ChannelIndex,
+{
+    type Color = Rgb888;
+
+    type Error = ();
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = embedded_graphics::Pixel<Self::Color>>,
+    {
+        for Pixel(p, c) in pixels {
+            if self.bounding_box().contains(p) {
+                self.set_pixel((p.x as u8, p.y as u8), (c.r(), c.g(), c.b()));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<P, SM, CH0, CH1> OriginDimensions for Unicorn<P, SM, CH0, CH1>
+where
+    P: PIOExt,
+    SM: pio::ValidStateMachine<PIO = P>,
+    pio::Tx<SM>: dma::WriteTarget<TransmittedWord = u32>,
+    CH0: dma::ChannelIndex,
+    CH1: dma::ChannelIndex,
+{
+    fn size(&self) -> Size {
+        Size::new(WIDTH as u32, HEIGHT as u32)
     }
 }
