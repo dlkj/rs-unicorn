@@ -5,17 +5,14 @@ use bsp::entry;
 use cortex_m::singleton;
 use defmt::*;
 use defmt_rtt as _;
+use embedded_hal::digital::OutputPin;
 use panic_probe as _;
 
-use rp_pico::{
-    self as bsp,
-    hal::{
-        dma::{self, DMAExt},
-        pio::PIOExt,
-    },
-};
+use rp_pico::{self as bsp};
 
-use bsp::hal::{clocks::init_clocks_and_plls, pac, sio::Sio, watchdog::Watchdog};
+use bsp::hal::{
+    clocks::init_clocks_and_plls, dma::DMAExt, pac, pio::PIOExt, sio::Sio, watchdog::Watchdog,
+};
 
 use rs_unicorn::{Unicorn, UnicornPins};
 
@@ -51,6 +48,8 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
+    let mut led = pins.led.into_push_pull_output();
+
     let (mut pio, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
 
     let unicorn_pins = UnicornPins {
@@ -74,7 +73,7 @@ fn main() -> ! {
 
     let mut unicorn = Unicorn::new(&mut pio, sm0, unicorn_pins, dma.ch0, dma.ch1, buf1, buf2);
 
-    let brightness = 255;
+    let brightness = 100;
     let red = (brightness, 0, 0);
     let green = (0, brightness, 0);
     let blue = (0, 0, brightness);
@@ -101,8 +100,12 @@ fn main() -> ! {
                 palette[((x + frame) % palette.len() as u8) as usize],
             );
         }
+
+        led.set_high().unwrap();
         unicorn.draw();
-        frame += 1;
+        led.set_low().unwrap();
+
+        // frame += 1;
         frame %= palette.len() as u8;
     }
 }

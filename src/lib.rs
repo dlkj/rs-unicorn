@@ -1,12 +1,10 @@
 #![no_std]
 
-use rp_pico::{
-    self as bsp,
-    hal::{
-        dma::{self, Channel},
-        pio::{self, PIOExt, PIO},
-    },
+use bsp::hal::{
+    dma::{self, Channel},
+    pio::{self, PIOExt, PIO},
 };
+use rp_pico::{self as bsp};
 
 use bsp::hal::gpio::{bank0::*, FunctionPio0, Pin, PullDown};
 use zerocopy::IntoBytes;
@@ -31,7 +29,18 @@ const BIT_STREAM_LENGTH: usize = ROW_COUNT2 * ROW_BYTES * BCD_FRAMES / 4;
 pub const WIDTH: usize = 16;
 pub const HEIGHT: usize = 7;
 
-pub struct Unicorn<'a, P, SM, CH0, CH1>
+type TransferBuffer<CH0, CH1, SM> = Option<(
+    dma::double_buffer::Transfer<
+        Channel<CH0>,
+        Channel<CH1>,
+        &'static mut [u32; BIT_STREAM_LENGTH],
+        pio::Tx<SM>,
+        (),
+    >,
+    &'static mut [u32; BIT_STREAM_LENGTH],
+)>;
+
+pub struct Unicorn<P, SM, CH0, CH1>
 where
     P: PIOExt,
     SM: pio::ValidStateMachine<PIO = P>,
@@ -39,22 +48,10 @@ where
     CH0: dma::ChannelIndex,
     CH1: dma::ChannelIndex,
 {
-    pio: &'a mut PIO<P>,
-    sm: pio::StateMachine<SM, pio::Running>,
-    pins: UnicornPins,
-    transfer_buf: Option<(
-        dma::double_buffer::Transfer<
-            Channel<CH0>,
-            Channel<CH1>,
-            &'static mut [u32; BIT_STREAM_LENGTH],
-            pio::Tx<SM>,
-            (),
-        >,
-        &'static mut [u32; BIT_STREAM_LENGTH],
-    )>,
+    transfer_buf: TransferBuffer<CH0, CH1, SM>,
 }
 
-impl<'a, P, SM, CH0, CH1> Unicorn<'a, P, (P, SM), CH0, CH1>
+impl<'a, P, SM, CH0, CH1> Unicorn<P, (P, SM), CH0, CH1>
 where
     P: PIOExt,
     SM: pio::StateMachineIndex,
@@ -69,7 +66,7 @@ where
         ch1: Channel<CH1>,
         bit_stream1: &'static mut [u32; BIT_STREAM_LENGTH],
         bit_stream2: &'static mut [u32; BIT_STREAM_LENGTH],
-    ) -> Unicorn<'a, P, (P, SM), CH0, CH1> {
+    ) -> Unicorn<P, (P, SM), CH0, CH1> {
         let pio_program = Self::assemble_pio_program();
         let installed = pio.install(&pio_program).unwrap();
 
@@ -112,7 +109,7 @@ where
             (pins.sr6.id().num, pio::PinDir::Output),
         ]);
 
-        let sm = sm.start();
+        sm.start();
 
         Self::init_bit_stream(bit_stream1);
         Self::init_bit_stream(bit_stream2);
@@ -120,9 +117,6 @@ where
         let transfer = dma::double_buffer::Config::new((ch0, ch1), bit_stream1, tx).start();
 
         Self {
-            pio,
-            sm,
-            pins,
             transfer_buf: Some((transfer, bit_stream2)),
         }
     }
@@ -252,7 +246,7 @@ static GAMMA_14BIT: [u16; 256] = [
     15273, 15410, 15547, 15685, 15823, 15962, 16102, 16242, 16383,
 ];
 
-impl<'pio, P, SM, CH0, CH1> Unicorn<'pio, P, SM, CH0, CH1>
+impl<P, SM, CH0, CH1> Unicorn<P, SM, CH0, CH1>
 where
     P: PIOExt,
     SM: pio::ValidStateMachine<PIO = P>,
