@@ -1,11 +1,15 @@
 use embedded_graphics::{
     pixelcolor::Rgb888,
-    prelude::{DrawTarget, Point},
+    prelude::{DrawTarget, Point, RgbColor},
     Drawable, Pixel,
 };
+use fugit::ExtU64;
 use fugit::MicrosDurationU64;
 
 use crate::{HEIGHT, WIDTH};
+
+use rand::SeedableRng;
+use rand::{rngs::SmallRng, seq::SliceRandom};
 
 pub trait Scene {
     fn tick<D>(&mut self, count: D)
@@ -55,6 +59,52 @@ impl Scene for ColorWheel {
                 Self::wheel((((x * 256) as u16 / WIDTH as u16 + self.offset as u16) & 255) as u8);
 
             for y in 0..HEIGHT {
+                Pixel(Point::new(x as i32, y as i32), color)
+                    .draw(draw_target)
+                    .unwrap()
+            }
+        }
+    }
+}
+
+pub struct DiscoFloor {
+    last_update: MicrosDurationU64,
+    pallet: [Rgb888; 4],
+    rng: SmallRng,
+}
+
+impl DiscoFloor {}
+
+impl Default for DiscoFloor {
+    fn default() -> Self {
+        Self {
+            last_update: MicrosDurationU64::from_ticks(0),
+            pallet: [Rgb888::RED, Rgb888::GREEN, Rgb888::BLUE, Rgb888::YELLOW],
+            rng: SmallRng::seed_from_u64(0),
+        }
+    }
+}
+
+impl Scene for DiscoFloor {
+    fn tick<D>(&mut self, count: D)
+    where
+        D: Into<MicrosDurationU64>,
+    {
+        self.last_update += count.into();
+        if self.last_update > 1.secs::<1, 1_000_000>() {
+            self.pallet.shuffle(&mut self.rng);
+            self.last_update = 0.secs();
+        }
+    }
+
+    fn draw<T>(&self, draw_target: &mut T)
+    where
+        T: DrawTarget<Color = Rgb888, Error = ()>,
+    {
+        for x in 0..WIDTH {
+            for y in 0..HEIGHT {
+                let color = self.pallet[((x / 2) % 2) + ((y / 2) % 2) * 2];
+
                 Pixel(Point::new(x as i32, y as i32), color)
                     .draw(draw_target)
                     .unwrap()

@@ -22,6 +22,7 @@ zerocopy-derive = "0.8"
 embedded-graphics = "0.8"
 fugit = "0.3"
 nb = "1.1"
+rand = { version = "0.8.4", default-features = false, features = ["small_rng"] }
 
 # cargo build/run
 [profile.dev]

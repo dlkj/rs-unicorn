@@ -17,6 +17,7 @@ use bsp::hal::{
     clocks::init_clocks_and_plls, dma::DMAExt, pac, pio::PIOExt, sio::Sio, watchdog::Watchdog,
 };
 
+use rs_unicorn::scene::DiscoFloor;
 use rs_unicorn::{
     scene::{ColorWheel, Scene},
     Unicorn, UnicornPins,
@@ -87,14 +88,15 @@ fn main() -> ! {
     let mut count_down = timer.count_down();
     count_down.start(10.millis());
 
-    let mut color_wheel = ColorWheel::default();
+    let mut scene = DiscoFloor::default();
+    // let mut scene = ColorWheel::default();
 
     loop {
         nb::block!(count_down.wait()).unwrap();
         count_down.start(10.millis());
 
-        color_wheel.tick(10.millis());
-        color_wheel.draw(&mut unicorn);
+        scene.tick(10.millis());
+        scene.draw(&mut unicorn);
 
         led.toggle().unwrap();
         unicorn.flush();
