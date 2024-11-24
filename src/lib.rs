@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod scene;
+
 use bsp::hal::{
     dma::{self, Channel},
     pio::{self, PIOExt, PIO},

@@ -2,25 +2,25 @@
 #![no_main]
 
 use bsp::entry;
+use cortex_m::prelude::*;
 use cortex_m::singleton;
 use defmt::*;
 use defmt_rtt as _;
-use embedded_graphics::{
-    mono_font::{ascii::FONT_5X8, MonoTextStyle},
-    pixelcolor::Rgb888,
-    prelude::*,
-    text::{Alignment, Text},
-};
-use embedded_hal::digital::OutputPin;
+use embedded_graphics::{pixelcolor::Rgb888, prelude::*};
+use embedded_hal::digital::StatefulOutputPin;
+use fugit::ExtU32;
 use panic_probe as _;
 
-use rp_pico::{self as bsp};
+use rp_pico::{self as bsp, hal::Timer};
 
 use bsp::hal::{
     clocks::init_clocks_and_plls, dma::DMAExt, pac, pio::PIOExt, sio::Sio, watchdog::Watchdog,
 };
 
-use rs_unicorn::{Unicorn, UnicornPins, HEIGHT};
+use rs_unicorn::{
+    scene::{ColorWheel, Scene},
+    Unicorn, UnicornPins,
+};
 
 /* Todo:
  *   - Check Pimoroni repos for updated pio code - https://github.com/pimoroni/pimoroni-pico/blob/main/libraries/galactic_unicorn/galactic_unicorn.pio
@@ -36,7 +36,7 @@ fn main() -> ! {
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
     let sio = Sio::new(pac.SIO);
 
-    let _clocks = init_clocks_and_plls(
+    let clocks = init_clocks_and_plls(
         bsp::XOSC_CRYSTAL_FREQ,
         pac.XOSC,
         pac.CLOCKS,
@@ -47,6 +47,8 @@ fn main() -> ! {
     )
     .ok()
     .unwrap();
+
+    let timer = Timer::new(pac.TIMER, &mut pac.RESETS, &clocks);
 
     let pins = bsp::Pins::new(
         pac.IO_BANK0,
@@ -82,20 +84,19 @@ fn main() -> ! {
 
     unicorn.clear(Rgb888::CSS_MIDNIGHT_BLUE).unwrap();
 
-    let text = "ABC";
-    let character_style = MonoTextStyle::new(&FONT_5X8, Rgb888::CSS_DARK_GOLDENROD);
-    Text::with_alignment(
-        text,
-        Point::new(1, HEIGHT as i32 - 1),
-        character_style,
-        Alignment::Left,
-    )
-    .draw(&mut unicorn)
-    .unwrap();
+    let mut count_down = timer.count_down();
+    count_down.start(10.millis());
+
+    let mut color_wheel = ColorWheel::default();
 
     loop {
-        led.set_high().unwrap();
+        nb::block!(count_down.wait()).unwrap();
+        count_down.start(10.millis());
+
+        color_wheel.tick(10.millis());
+        color_wheel.draw(&mut unicorn);
+
+        led.toggle().unwrap();
         unicorn.flush();
-        led.set_low().unwrap();
     }
 }
