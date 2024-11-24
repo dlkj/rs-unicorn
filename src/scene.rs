@@ -8,14 +8,14 @@ use fugit::MicrosDurationU64;
 
 use crate::{HEIGHT, WIDTH};
 
-use rand::SeedableRng;
 use rand::{rngs::SmallRng, seq::SliceRandom};
+use rand::{Rng, SeedableRng};
 
 pub trait Scene {
     fn tick<D>(&mut self, count: D)
     where
         D: Into<MicrosDurationU64>;
-    fn draw<T>(&self, draw_target: &mut T)
+    fn draw<T>(&mut self, draw_target: &mut T)
     where
         T: DrawTarget<Color = Rgb888, Error = ()>;
 }
@@ -50,7 +50,7 @@ impl Scene for ColorWheel {
             .wrapping_add(((count.into().ticks() / (1024 * 8)) & 0xff) as u8)
     }
 
-    fn draw<T>(&self, draw_target: &mut T)
+    fn draw<T>(&mut self, draw_target: &mut T)
     where
         T: DrawTarget<Color = Rgb888, Error = ()>,
     {
@@ -97,7 +97,7 @@ impl Scene for DiscoFloor {
         }
     }
 
-    fn draw<T>(&self, draw_target: &mut T)
+    fn draw<T>(&mut self, draw_target: &mut T)
     where
         T: DrawTarget<Color = Rgb888, Error = ()>,
     {
@@ -109,6 +109,51 @@ impl Scene for DiscoFloor {
                     .draw(draw_target)
                     .unwrap()
             }
+        }
+    }
+}
+
+pub struct Sparkle {
+    rng: SmallRng,
+}
+
+impl Sparkle {}
+
+impl Default for Sparkle {
+    fn default() -> Self {
+        Self {
+            rng: SmallRng::seed_from_u64(0),
+        }
+    }
+}
+
+impl Scene for Sparkle {
+    fn tick<D>(&mut self, count: D)
+    where
+        D: Into<MicrosDurationU64>,
+    {
+    }
+
+    fn draw<T>(&mut self, draw_target: &mut T)
+    where
+        T: DrawTarget<Color = Rgb888, Error = ()>,
+    {
+        draw_target.clear(Rgb888::BLACK).unwrap();
+
+        for _ in 0..WIDTH {
+            Pixel(
+                Point::new(
+                    self.rng.gen_range(0..WIDTH as i32),
+                    self.rng.gen_range(0..HEIGHT as i32),
+                ),
+                Rgb888::new(
+                    self.rng.gen_range(0..255),
+                    self.rng.gen_range(0..255),
+                    self.rng.gen_range(0..255),
+                ),
+            )
+            .draw(draw_target)
+            .unwrap()
         }
     }
 }

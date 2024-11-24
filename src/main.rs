@@ -18,6 +18,7 @@ use bsp::hal::{
 };
 
 use rs_unicorn::scene::DiscoFloor;
+use rs_unicorn::scene::Sparkle;
 use rs_unicorn::{
     scene::{ColorWheel, Scene},
     Unicorn, UnicornPins,
@@ -88,8 +89,11 @@ fn main() -> ! {
     let mut count_down = timer.count_down();
     count_down.start(10.millis());
 
-    let mut scene = DiscoFloor::default();
-    // let mut scene = ColorWheel::default();
+    let _color_wheel = ColorWheel::default();
+    let _disco_floor = DiscoFloor::default();
+    let sparkle = Sparkle::default();
+
+    let mut scene = sparkle;
 
     loop {
         nb::block!(count_down.wait()).unwrap();
