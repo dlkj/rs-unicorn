@@ -367,3 +367,25 @@ where
         Size::new(WIDTH as u32, HEIGHT as u32)
     }
 }
+
+pub trait FadeTarget {
+    fn fade(&mut self, amount: u8);
+}
+impl<P, SM, CH0, CH1> FadeTarget for Unicorn<P, SM, CH0, CH1>
+where
+    P: PIOExt,
+    SM: pio::ValidStateMachine<PIO = P>,
+    pio::Tx<SM>: dma::WriteTarget<TransmittedWord = u32>,
+    CH0: dma::ChannelIndex,
+    CH1: dma::ChannelIndex,
+{
+    fn fade(&mut self, amount: u8) {
+        for p in self.frame_buffer.as_mut_slice() {
+            *p = Rgb888::new(
+                ((p.r() as u16 * amount as u16 / 255) & 0xFF) as u8,
+                ((p.g() as u16 * amount as u16 / 255) & 0xFF) as u8,
+                ((p.b() as u16 * amount as u16 / 255) & 0xFF) as u8,
+            );
+        }
+    }
+}

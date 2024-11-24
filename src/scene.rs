@@ -6,7 +6,7 @@ use embedded_graphics::{
 use fugit::ExtU64;
 use fugit::MicrosDurationU64;
 
-use crate::{HEIGHT, WIDTH};
+use crate::{FadeTarget, HEIGHT, WIDTH};
 
 use rand::{rngs::SmallRng, seq::SliceRandom};
 use rand::{Rng, SeedableRng};
@@ -17,7 +17,7 @@ pub trait Scene {
         D: Into<MicrosDurationU64>;
     fn draw<T>(&mut self, draw_target: &mut T)
     where
-        T: DrawTarget<Color = Rgb888, Error = ()>;
+        T: DrawTarget<Color = Rgb888, Error = ()> + FadeTarget;
 }
 
 #[derive(Default)]
@@ -151,6 +151,47 @@ impl Scene for Sparkle {
                     self.rng.gen_range(0..255),
                     self.rng.gen_range(0..255),
                 ),
+            )
+            .draw(draw_target)
+            .unwrap()
+        }
+    }
+}
+
+pub struct Rain {
+    rng: SmallRng,
+}
+
+impl Rain {}
+
+impl Default for Rain {
+    fn default() -> Self {
+        Self {
+            rng: SmallRng::seed_from_u64(0),
+        }
+    }
+}
+
+impl Scene for Rain {
+    fn tick<D>(&mut self, count: D)
+    where
+        D: Into<MicrosDurationU64>,
+    {
+    }
+
+    fn draw<T>(&mut self, draw_target: &mut T)
+    where
+        T: DrawTarget<Color = Rgb888, Error = ()> + FadeTarget,
+    {
+        draw_target.fade(0xF0);
+
+        for _ in 0..1 {
+            Pixel(
+                Point::new(
+                    self.rng.gen_range(0..WIDTH as i32),
+                    self.rng.gen_range(0..HEIGHT as i32),
+                ),
+                Rgb888::WHITE,
             )
             .draw(draw_target)
             .unwrap()
